@@ -902,7 +902,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     /* ---------- Stylesheet File Parsing ---------- */
     {
-        std::ifstream stylesheet_stream("./green-style.qss", std::ios::binary);
+        std::ifstream stylesheet_stream("./amoled-green.qss", std::ios::binary);
 
         if(stylesheet_stream.good()) {
             std::vector<uint8_t> file_bytes(
