@@ -8,7 +8,6 @@ INCLUDEPATH += \
     dependencies/nlohmann-json \
     dependencies/qcustomplot
 
-
 LIBS += -Ldependencies/curl/lib
 LIBS += -llibcurl
 
