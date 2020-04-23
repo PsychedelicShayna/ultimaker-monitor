@@ -6,11 +6,10 @@ The interface is built using Qt5, so you will need a Qt environment in order to 
 
 _Footnote: this was designed with 64-bit in mind, I can't confirm if a 32-bit build would work as I do not have a 32-bit copy of Curl_
 
-## Screenshot
-![](screenshots/ultimaker-monitor_UQNUYtjfxj.png?raw=true)
-
 ## Thanks
 - [Jaime Quiroga](https://github.com/GTRONICK), for the the great AMOLED QSS stylesheet template that I based the design off of.
 - [Niels Lohmann](https://github.com/nlohmann), for his awesome JSON library that I can't live without.
 - [QCustomPlot](https://www.qcustomplot.com/), for their amazing customizable plot widget.
 
+## Screenshot
+![](screenshots/ultimaker-monitor_UQNUYtjfxj.png?raw=true)
