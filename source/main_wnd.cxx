@@ -415,6 +415,9 @@ void MainWindow::handleSystemInfoResponse() {
     if(response.Code == 200) {
         ui->pte_syslog->clear();
 
+        const double& system_uptime = response_json.at("uptime").get<double>() / 60 / 60 / 24;
+        ui->lcd_uptime->display(system_uptime);
+
         const std::vector<std::string>& log_messages = response_json.at("log").get<std::vector<std::string>>();
         QVector<QString> q_log_messages(static_cast<int32_t>(log_messages.size()));
 
