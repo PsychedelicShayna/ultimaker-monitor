@@ -8,7 +8,7 @@ _Footnote: this was designed with 64-bit in mind, I can't confirm if a 32-bit bu
 
 ## Download
 If you'd rather not build it yourself, you can find a pre-compiled binary to download in the [releases section](https://github.com/MisanthropicShayna/ultimaker-monitor/releases).
-Do note that you will the Microsoft Visual C++ runtime installed for it to function, you can find a copy [here](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads).
+Do note that you will need the Microsoft Visual C++ runtime installed for it to function, you can find a copy [here](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads), though most people already have it installed.
 
 
 ## Thanks
