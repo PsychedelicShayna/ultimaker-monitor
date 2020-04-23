@@ -1,12 +1,15 @@
-QT += core gui charts widgets printsupport concurrent
+QT += core gui widgets concurrent
 
 TARGET = ultimaker-monitor
 TEMPLATE = app
 
 INCLUDEPATH += \
-    C:/Curl/include
+    dependencies/curl\include \
+    dependencies/nlohmann-json \
+    dependencies/qcustomplot
 
-LIBS += -LC:/Curl/lib
+
+LIBS += -Ldependencies/curl/lib
 LIBS += -llibcurl
 
 LIBS += \
@@ -21,21 +24,14 @@ LIBS += \
 CONFIG += c++17
 
 SOURCES += \
-        main.cxx \
-        main_wnd.cxx \
-        qcustomplot.cpp
-        # printer_state.cxx \
-        # ltimaker_printer.cxx \
-        # ltimaker_printer_api.cxx
+        source/main.cxx \
+        source/main_wnd.cxx \
+        dependencies/qcustomplot/qcustomplot.cpp
 
 HEADERS += \
-        main_wnd.hxx \
-        qcustomplot.h \
-        json.hpp
-
-        # printer_state.hxx \
-        # ultimaker_printer.hxx \
-        # ultimaker_printer_api.hxx
+        source/main_wnd.hxx \
+        dependencies/qcustomplot/qcustomplot.h \
+        dependencies/nlohmann-json/json.hpp
 
 FORMS += \
-        main_wnd.ui
+        source\main_wnd.ui
