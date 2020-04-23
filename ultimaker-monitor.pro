@@ -1,24 +1,23 @@
-QT += core gui widgets concurrent
+QT += core gui widgets concurrent printsupport
 
 TARGET = ultimaker-monitor
 TEMPLATE = app
 
 INCLUDEPATH += \
-    dependencies/curl\include \
+    dependencies/curl/include \
     dependencies/nlohmann-json \
     dependencies/qcustomplot
 
-LIBS += -Ldependencies/curl/lib
-LIBS += -llibcurl
-
 LIBS += \
+    -L..\..\dependencies/curl/lib \
+    -llibcurl \
     -lws2_32 \
     -lwldap32 \
     -ladvapi32 \
     -lkernel32 \
     -lcomdlg32 \
     -lcrypt32 \
-    -lnormaliz
+    -lnormaliz \
 
 CONFIG += c++17
 
