@@ -72,21 +72,19 @@ public:
     AsyncType() {}
 };
 
-/* Acts like std::lock_guard but for atomics, where a provided
- * value is stored in the atomic upon destruction. Prevents
- * cases where a function fails to re-set a value due to
- * exceptions, etc. Ensures the value will always be reset. */
-template<typename T>
-class AtomicDestructionGuard {
+class RaiiExecution {
 protected:
-    std::atomic<T>* const guardedAtomic;
-    const T resetValue;
+    std::function<void()> destructionLambda;
 
 public:
-    AtomicDestructionGuard(std::atomic<T>* atomic, T reset_value) : guardedAtomic(atomic), resetValue(reset_value) {}
+    template<typename CLAMBDA, typename DLAMBDA>
+    RaiiExecution(CLAMBDA construction_lambda, DLAMBDA destruction_lambda) {
+        destructionLambda = destruction_lambda;
+        construction_lambda();
+    }
 
-    ~AtomicDestructionGuard() {
-        guardedAtomic->store(resetValue);
+    ~RaiiExecution() {
+        destructionLambda();
     }
 };
 
@@ -133,15 +131,33 @@ protected:
         Http::Response Response;
     };
 
+    // Struct to store the authorization Id/Key pair.
+    struct AuthCredentials {
+        std::string Id;
+        std::string Key;
+
+        operator std::pair<std::string, std::string>();
+        operator std::pair<std::string, std::string>() const;
+
+        bool ValidSize() const;
+    };
+
 /* ---------- Compile Time Constants ---- */
+
     static constexpr const char* ENDP_SYSTEM_INFO = "/api/v1/system";
-    static constexpr const char* ENDP_PRINT_JOB = "/api/v1/print_job";
-    static constexpr const char* ENDP_PRINT_HISTORY = "/api/v1/history/print_jobs";
+    static constexpr const char* ENDP_NETWORK_INFO = "/api/v1/printer/network";
+
     static constexpr const char* ENDP_BED_TEMPERATURE = "/api/v1/printer/bed/temperature";
     static constexpr const char* ENDP_EXT1_TEMPERATURE = "/api/v1/printer/heads/0/extruders/0/hotend/temperature";
     static constexpr const char* ENDP_EXT2_TEMPERATURE = "/api/v1/printer/heads/0/extruders/1/hotend/temperature";
-    static constexpr const char* ENDP_AUTH_VERIFICATION = "/api/v1/auth/verify";
+
     static constexpr const char* ENDP_PRINTJOB_STATE = "/api/v1/print_job/state";
+    static constexpr const char* ENDP_PRINT_HISTORY = "/api/v1/history/print_jobs";
+    static constexpr const char* ENDP_PRINT_JOB = "/api/v1/print_job";
+
+    static constexpr const char* ENDP_AUTH_VERIFICATION = "/api/v1/auth/verify";
+    static constexpr const char* ENDP_AUTH_REQUEST = "/api/v1/auth/request";
+    static constexpr const char* ENDP_AUTH_CHECK = "/api/v1/auth/check/";
 
 
 /* ---------- Temperature Plots ---------- */
@@ -177,8 +193,7 @@ protected:
 
     /* The id/key used for requests that require
      * HTTP authorization. */
-    std::string authorizationKey;
-    std::string authorizationId;
+    AsyncType<AuthCredentials> authCredentials;
 
 /* ---------- Polling ---------- */
 

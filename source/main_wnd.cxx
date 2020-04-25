@@ -84,7 +84,7 @@ Http::Response Http::Post(
 
         curl_easy_perform(curl_session);
         curl_easy_getinfo(curl_session, CURLINFO_HTTP_CODE, &http_response.Code);
-        http_response.Filled = true;
+        if(http_response.Code != 0) http_response.Filled = true;
 
         curl_easy_cleanup(curl_session);
         curl_session = nullptr;
@@ -132,7 +132,7 @@ Http::Response Http::Put(const std::string& url, const std::string& body, const 
 
         curl_easy_getinfo(curl_session, CURLINFO_HTTP_CODE, &http_response.Code);
 
-        http_response.Filled = true;
+        if(http_response.Code != 0) http_response.Filled = true;
 
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl_session);
@@ -173,7 +173,7 @@ Http::Response Http::Get(const std::string& url, const std::pair<std::string, st
         curl_easy_perform(curl_session);
 
         curl_easy_getinfo(curl_session, CURLINFO_HTTP_CODE, &http_response.Code);
-        http_response.Filled = true;
+        if(http_response.Code != 0) http_response.Filled = true;
 
         curl_easy_cleanup(curl_session);
         curl_session = nullptr;
@@ -185,6 +185,17 @@ Http::Response Http::Get(const std::string& url, const std::pair<std::string, st
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // MainWindow Class Definitions
 
+MainWindow::AuthCredentials::operator std::pair<std::string, std::string>() {
+    return std::make_pair(Id, Key);
+}
+
+MainWindow::AuthCredentials::operator std::pair<std::string, std::string>() const {
+    return std::make_pair(Id, Key);
+}
+
+bool MainWindow::AuthCredentials::ValidSize() const {
+    return (Id.size() == 32 && Key.size() == 64);
+}
 
 /* ---------- Temperature Polling / Handling ---------- */
 void MainWindow::pollTemperature() {
@@ -205,96 +216,102 @@ void MainWindow::pollTemperature() {
     }
 }
 void MainWindow::handleTemperatureResponses(int response_index) {
-    AtomicDestructionGuard<bool> atomic_destruction_guard(&handlingResponse, false);
-    handlingResponse = true;
+    RaiiExecution raii_execution([this]() -> void {
+        handlingResponse = true;
+    }, [this]() -> void {
+        handlingResponse = false;
+    });
 
-    const EndpointData& response_data = temperatureResponses.resultAt(response_index);
-    const std::string& response_endpoint = response_data.Endpoint;
-    const Http::Response& response = response_data.Response;
+    const EndpointData& future_result = temperatureResponses.resultAt(response_index);
 
-    Json response_json;
+    const Http::Response& response = future_result.Response;
+    const std::string& response_endpoint = future_result.Endpoint;
 
     if(response.Filled) {
-        try {
-            response_json = Json::parse(response.Body);
-        } catch(const nlohmann::detail::exception& json_exception) {
-            std::cerr << "JSON Exception (" << json_exception.what() << ") when parsing response from endpoint " <<
-                response_endpoint << " - code " << response.Code << std::endl;
+        switch(response.Code) {
+            case 200 : {
+                try {
+                    const Json& json_response_body = Json::parse(response.Body);
 
-            return;
+                    if(response_endpoint == ENDP_BED_TEMPERATURE) {
+                        const double current_temperature = json_response_body.at("current").get<double>();
+                        const double target_temperature = json_response_body.at("target").get<double>();
+
+                        ui->rbt_heater_active->setChecked(target_temperature > 0);
+
+                        if(target_temperature >= current_temperature) {
+                            ui->prg_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
+                            ui->prg_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
+                            ui->prg_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
+                            ui->prg_thermal_target->setEnabled(true);
+                        } else {
+                            ui->prg_thermal_target->setRange(0, 1);
+                            ui->prg_thermal_target->setValue(1);
+                            ui->prg_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
+                            ui->prg_thermal_target->setEnabled(false);
+                        }
+
+                        printBedPlotData.removeFirst();
+                        printBedPlotData.append(current_temperature);
+                        printBedPlot->graph(0)->setData(printBedPlotFrames, printBedPlotData);
+                        printBedPlot->replot();
+                    } else if(response_endpoint == ENDP_EXT1_TEMPERATURE) {
+                        const double current_temperature = json_response_body.at("current").get<double>();
+                        const double target_temperature = json_response_body.at("target").get<double>();
+
+                        ui->rbt_ext1_heater_active->setChecked(target_temperature > 0);
+
+                        if(target_temperature >= current_temperature) {
+                            ui->prg_ext1_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
+                            ui->prg_ext1_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
+                            ui->prg_ext1_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
+                            ui->prg_ext1_thermal_target->setEnabled(true);
+                        } else {
+                            ui->prg_ext1_thermal_target->setRange(0, 1);
+                            ui->prg_ext1_thermal_target->setValue(1);
+                            ui->prg_ext1_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
+                            ui->prg_ext1_thermal_target->setEnabled(false);
+                        }
+
+                        primaryExtruderPlotData.removeFirst();
+                        primaryExtruderPlotData.append(current_temperature);
+                        primaryExtruderPlot->graph(0)->setData(primaryExtruderPlotFrames, primaryExtruderPlotData);
+                        primaryExtruderPlot->replot();
+                    } else if(response_endpoint == ENDP_EXT2_TEMPERATURE) {
+                        const double current_temperature = json_response_body.at("current").get<double>();
+                        const double target_temperature = json_response_body.at("target").get<double>();
+
+                        ui->rbt_ext2_heater_active->setChecked(target_temperature > 0);
+
+                        if(target_temperature >= current_temperature) {
+                            ui->prg_ext2_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
+                            ui->prg_ext2_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
+                            ui->prg_ext2_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
+                            ui->prg_ext2_thermal_target->setEnabled(true);
+                        } else {
+                            ui->prg_ext2_thermal_target->setRange(0, 1);
+                            ui->prg_ext2_thermal_target->setValue(1);
+                            ui->prg_ext2_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
+                            ui->prg_ext2_thermal_target->setEnabled(false);
+                        }
+
+                        secondaryExtruderPlotData.removeFirst();
+                        secondaryExtruderPlotData.append(current_temperature);
+                        secondaryExtruderPlot->graph(0)->setData(secondaryExtruderPlotFrames, secondaryExtruderPlotData);
+                        secondaryExtruderPlot->replot();
+                    }
+                } catch(nlohmann::detail::exception& json_exception) {
+                    std::cerr << json_exception.what() << std::endl;
+                }
+
+                break;
+            }
+
+            default : {
+                std::cerr << "Unhandled HTTP status code: " << response.Code << std::endl;
+                break;
+            }
         }
-    } else {
-        std::cerr << "Response from endpoint " << response_endpoint << " wans't filled." << std::endl;
-        return;
-    }
-
-    if(response_endpoint == ENDP_BED_TEMPERATURE && response.Code == 200) {
-        const double current_temperature = response_json.at("current").get<double>();
-        const double target_temperature = response_json.at("target").get<double>();
-
-        ui->rbt_heater_active->setChecked(target_temperature > 0);
-
-        if(target_temperature >= current_temperature) {
-            ui->prg_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
-            ui->prg_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
-            ui->prg_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
-            ui->prg_thermal_target->setEnabled(true);
-        } else {
-            ui->prg_thermal_target->setRange(0, 1);
-            ui->prg_thermal_target->setValue(1);
-            ui->prg_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
-            ui->prg_thermal_target->setEnabled(false);
-        }
-
-        printBedPlotData.removeFirst();
-        printBedPlotData.append(current_temperature);
-        printBedPlot->graph(0)->setData(printBedPlotFrames, printBedPlotData);
-        printBedPlot->replot();
-    } else if(response_endpoint == ENDP_EXT1_TEMPERATURE) {
-        const double current_temperature = response_json.at("current").get<double>();
-        const double target_temperature = response_json.at("target").get<double>();
-
-        ui->rbt_ext1_heater_active->setChecked(target_temperature > 0);
-
-        if(target_temperature >= current_temperature) {
-            ui->prg_ext1_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
-            ui->prg_ext1_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
-            ui->prg_ext1_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
-            ui->prg_ext1_thermal_target->setEnabled(true);
-        } else {
-            ui->prg_ext1_thermal_target->setRange(0, 1);
-            ui->prg_ext1_thermal_target->setValue(1);
-            ui->prg_ext1_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
-            ui->prg_ext1_thermal_target->setEnabled(false);
-        }
-
-        primaryExtruderPlotData.removeFirst();
-        primaryExtruderPlotData.append(current_temperature);
-        primaryExtruderPlot->graph(0)->setData(primaryExtruderPlotFrames, primaryExtruderPlotData);
-        primaryExtruderPlot->replot();
-
-    } else if(response_endpoint == ENDP_EXT2_TEMPERATURE) {
-        const double current_temperature = response_json.at("current").get<double>();
-        const double target_temperature = response_json.at("target").get<double>();
-
-        ui->rbt_ext2_heater_active->setChecked(target_temperature > 0);
-
-        if(target_temperature >= current_temperature) {
-            ui->prg_ext2_thermal_target->setRange(0, static_cast<int32_t>(std::round(target_temperature)));
-            ui->prg_ext2_thermal_target->setValue(static_cast<int32_t>(std::round(current_temperature)));
-            ui->prg_ext2_thermal_target->setFormat("THERMAL TARGET %p% (%v °C / %m °C)");
-            ui->prg_ext2_thermal_target->setEnabled(true);
-        } else {
-            ui->prg_ext2_thermal_target->setRange(0, 1);
-            ui->prg_ext2_thermal_target->setValue(1);
-            ui->prg_ext2_thermal_target->setFormat("THERMAL TARGET %p% (" + QString(QString::number(current_temperature) + " °C / 0 °C)"));
-            ui->prg_ext2_thermal_target->setEnabled(false);
-        }
-
-        secondaryExtruderPlotData.removeFirst();
-        secondaryExtruderPlotData.append(current_temperature);
-        secondaryExtruderPlot->graph(0)->setData(secondaryExtruderPlotFrames, secondaryExtruderPlotData);
-        secondaryExtruderPlot->replot();
     }
 }
 
@@ -311,62 +328,79 @@ void MainWindow::pollPrintJob() {
     }
 }
 void MainWindow::handlePrintJobResponse() {
-    AtomicDestructionGuard<bool> atomic_destruction_guard(&handlingResponse, false);
-    handlingResponse = true;
+    RaiiExecution raii_execution([this]() -> void {
+        handlingResponse = true;
+    }, [this]() -> void {
+        handlingResponse = false;
+    });
 
-    const EndpointData& response_data = printjobResponse.result();
-    const std::string& response_endpoint = response_data.Endpoint;
-    const Http::Response& response = response_data.Response;
 
-    Json response_json;
+    const EndpointData& future_result = printjobResponse.result();
+    const Http::Response& response = future_result.Response;
 
     if(response.Filled) {
-        try {
-            response_json = Json::parse(response.Body);
-        } catch(const nlohmann::detail::exception& json_exception) {
-            std::cerr << "JSON Exception (" << json_exception.what() << ") when parsing response from endpoint " <<
-                response_endpoint << " - code " << response.Code << std::endl;
+        switch(response.Code) {
+            case 200:
+            case 201 : {
+                try {
+                    const Json& response_body_json = Json::parse(response.Body);
 
-            return;
+                    ui->grp_printjob->setTitle(QString::fromStdString("PRINT JOB - " + response_body_json.at("name").get<std::string>()));
+
+                    const double& time_elapsed = response_body_json.at("time_elapsed").get<double>();
+                    const double& time_total = response_body_json.at("time_total").get<double>();
+
+                    if(time_elapsed <= time_total) {
+                        ui->prg_printjob->setRange(0, static_cast<int32_t>(std::round(time_total)));
+                        ui->prg_printjob->setValue(static_cast<int32_t>(std::round(time_elapsed)));
+                    } else {
+                        ui->prg_printjob->setRange(0, 1);
+                        ui->prg_printjob->setValue(1);
+                    }
+
+                    std::string time_elapsed_str, time_total_str;
+
+                    if(time_elapsed < 60) {
+                        time_elapsed_str = to_string_precision(time_elapsed, 2) + " Seconds";
+                    } else if((time_elapsed / 60) < 60) {
+                        time_elapsed_str = to_string_precision(time_elapsed / 60, 2) + " Minutes";
+                    } else {
+                        time_elapsed_str = to_string_precision(time_elapsed / 60 / 60, 2) + " Hours";
+                    }
+
+                    if(time_total < 60) {
+                        time_total_str = to_string_precision(time_total, 2) + " Seconds";
+                    } else if((time_elapsed / 60) < 60) {
+                        time_total_str = to_string_precision(time_total / 60, 2) + " Minutes";
+                    } else {
+                        time_total_str = to_string_precision(time_total / 60 / 60, 2) + " Hours";
+                    }
+
+                    ui->prg_printjob->setFormat("%p% (" + QString::fromStdString(time_elapsed_str) + " / " + QString::fromStdString(time_total_str) + ")");
+                } catch(nlohmann::detail::exception& json_exception) {
+                    std::cerr << json_exception.what() << std::endl;
+                }
+
+                break;
+            }
+
+            case 404 : {
+                ui->grp_printjob->setTitle("PRINT JOB");
+                ui->prg_printjob->setFormat("NO PRINT JOB");
+                ui->prg_printjob->setRange(0, 1);
+                ui->prg_printjob->setValue(0);
+                break;
+            }
+
+            default : {
+                std::cerr << "Unhandled HTTP status code: " << response.Code << std::endl;
+                break;
+            }
         }
-    } else {
-        std::cerr << "Response from endpoint " << response_endpoint << " wans't filled." << std::endl;
-        return;
     }
 
+
     if(response.Code == 200 || response.Code == 201) {
-        ui->grp_printjob->setTitle(QString::fromStdString("PRINT JOB - " + response_json.at("name").get<std::string>()));
-
-        const double& time_elapsed = response_json.at("time_elapsed").get<double>();
-        const double& time_total = response_json.at("time_total").get<double>();
-
-        if(time_elapsed <= time_total) {
-            ui->prg_printjob->setRange(0, static_cast<int32_t>(std::round(time_total)));
-            ui->prg_printjob->setValue(static_cast<int32_t>(std::round(time_elapsed)));
-        } else {
-            ui->prg_printjob->setRange(0, 1);
-            ui->prg_printjob->setValue(1);
-        }
-
-        std::string time_elapsed_str, time_total_str;
-
-        if(time_elapsed < 60) {
-            time_elapsed_str = to_string_precision(time_elapsed, 2) + " Seconds";
-        } else if((time_elapsed / 60) < 60) {
-            time_elapsed_str = to_string_precision(time_elapsed / 60, 2) + " Minutes";
-        } else {
-            time_elapsed_str = to_string_precision(time_elapsed / 60 / 60, 2) + " Hours";
-        }
-
-        if(time_total < 60) {
-            time_total_str = to_string_precision(time_total, 2) + " Seconds";
-        } else if((time_elapsed / 60) < 60) {
-            time_total_str = to_string_precision(time_total / 60, 2) + " Minutes";
-        } else {
-            time_total_str = to_string_precision(time_total / 60 / 60, 2) + " Hours";
-        }
-
-        ui->prg_printjob->setFormat("%p% (" + QString::fromStdString(time_elapsed_str) + " / " + QString::fromStdString(time_total_str) + ")");
     } else if(response.Code == 404) {
         ui->grp_printjob->setTitle("PRINT JOB");
         ui->prg_printjob->setFormat("NO PRINT JOB");
@@ -389,56 +423,61 @@ void MainWindow::pollSystemInfo() {
     }
 }
 void MainWindow::handleSystemInfoResponse() {
-    AtomicDestructionGuard<bool> atomic_destruction_guard(&handlingResponse, false);
-    handlingResponse = true;
+    RaiiExecution raii_execution([this]() -> void {
+        handlingResponse = true;
+    }, [this]() -> void {
+        handlingResponse = false;
+    });
 
-    const EndpointData& response_data = systemInfoResponse.result();
-    const std::string& response_endpoint = response_data.Endpoint;
-    const Http::Response& response = response_data.Response;
-
-    Json response_json;
+    const EndpointData& future_result = systemInfoResponse.result();
+    const Http::Response& response = future_result.Response;
 
     if(response.Filled) {
-        try {
-            response_json = Json::parse(response.Body);
-        } catch(const nlohmann::detail::exception& json_exception) {
-            std::cerr << "JSON Exception (" << json_exception.what() << ") when parsing response from endpoint " <<
-                response_endpoint << " - code " << response.Code << std::endl;
+        switch(response.Code) {
+            case 200 : {
+                try  {
+                    const Json& response_body_json = Json::parse(response.Body);
 
-            return;
+                    ui->pte_syslog->clear();
+
+                    const double& system_uptime = response_body_json.at("uptime").get<double>() / 60 / 60 / 24;
+                    ui->lcd_uptime->display(system_uptime);
+
+                    const std::vector<std::string>& log_messages = response_body_json.at("log").get<std::vector<std::string>>();
+                    QVector<QString> q_log_messages(static_cast<int32_t>(log_messages.size()));
+
+                    std::transform(log_messages.begin(), log_messages.end(), q_log_messages.begin(), [](const std::string& log_message) -> QString {
+                        return QString::fromStdString(log_message);
+                    });
+
+                    for(const auto& log_message : q_log_messages) {
+                        ui->pte_syslog->appendPlainText(log_message);
+                    }
+
+                    const auto& memory = response_body_json.at("memory");
+
+                    uint32_t memory_capacity = memory.at("total").get<uint32_t>();
+                    uint32_t memory_usage = memory.at("used").get<uint32_t>();
+
+                    memory_capacity = static_cast<uint32_t>(std::round(static_cast<double>(memory_capacity) / 1024 / 1024));
+                    memory_usage = static_cast<uint32_t>(std::round(static_cast<double>(memory_usage) / 1024 / 1024));
+
+                    ui->prg_memory->setRange(0, memory_capacity);
+                    ui->prg_memory->setValue(memory_usage);
+
+
+                } catch(nlohmann::detail::exception& json_exception) {
+                    std::cerr << json_exception.what() << std::endl;
+                }
+
+                break;
+            }
+
+            default : {
+                std::cerr << "Unhandled HTTP status code: " << response.Code << std::endl;
+                break;
+            }
         }
-    } else {
-        std::cerr << "Response from endpoint " << response_endpoint << " wans't filled." << std::endl;
-        return;
-    }
-
-    if(response.Code == 200) {
-        ui->pte_syslog->clear();
-
-        const double& system_uptime = response_json.at("uptime").get<double>() / 60 / 60 / 24;
-        ui->lcd_uptime->display(system_uptime);
-
-        const std::vector<std::string>& log_messages = response_json.at("log").get<std::vector<std::string>>();
-        QVector<QString> q_log_messages(static_cast<int32_t>(log_messages.size()));
-
-        std::transform(log_messages.begin(), log_messages.end(), q_log_messages.begin(), [](const std::string& log_message) -> QString {
-            return QString::fromStdString(log_message);
-        });
-
-        for(const auto& log_message : q_log_messages) {
-            ui->pte_syslog->appendPlainText(log_message);
-        }
-
-        const auto& memory = response_json.at("memory");
-
-        uint32_t memory_capacity = memory.at("total").get<uint32_t>();
-        uint32_t memory_usage = memory.at("used").get<uint32_t>();
-
-        memory_capacity = static_cast<uint32_t>(std::round(static_cast<double>(memory_capacity) / 1024 / 1024));
-        memory_usage = static_cast<uint32_t>(std::round(static_cast<double>(memory_usage) / 1024 / 1024));
-
-        ui->prg_memory->setRange(0, memory_capacity);
-        ui->prg_memory->setValue(memory_usage);
     }
 }
 
@@ -455,40 +494,42 @@ void MainWindow::pollPrintHistory(){
     }
 }
 void MainWindow::handlePrintHistoryResponse() {
-    AtomicDestructionGuard<bool> atomic_destruction_guard(&handlingResponse, false);
-    handlingResponse = true;
+    RaiiExecution raii_execution([this]() -> void {
+        handlingResponse = true;
+    }, [this]() -> void {
+        handlingResponse = false;
+    });
 
-    const EndpointData& response_data = printHistoryResponse.result();
-    const std::string& response_endpoint = response_data.Endpoint;
-    const Http::Response& response = response_data.Response;
-
-    Json response_json;
+    const EndpointData& future_result = printHistoryResponse.result();
+    const Http::Response& response = future_result.Response;
 
     if(response.Filled) {
-        try {
-            response_json = Json::parse(response.Body);
-        } catch(const nlohmann::detail::exception& json_exception) {
-            std::cerr << "JSON Exception (" << json_exception.what() << ") when parsing response from endpoint " <<
-                response_endpoint << " - code " << response.Code << std::endl;
+        switch(response.Code) {
+            case 200 : {
+                try {
+                    const Json& response_body_json = Json::parse(response.Body);
+                    printHistory->clear();
 
-            return;
-        }
-    } else {
-        std::cerr << "Response from endpoint " << response_endpoint << " wans't filled." << std::endl;
-        return;
-    }
+                    for(const auto& print_job : response_body_json) {
+                        const std::string& time_finished = print_job.at("datetime_finished").get<std::string>();
+                        const std::string& time_started = print_job.at("datetime_started").get<std::string>();
+                        const std::string& source = print_job.at("source").get<std::string>();
+                        const std::string& result = print_job.at("result").get<std::string>();
+                        const std::string& name = print_job.at("name").get<std::string>();
 
-    if(response.Code == 200) {
-        printHistory->clear();
+                        printHistory->addItem(QString::fromStdString(time_started + " - " + time_finished + " | " + name + " (" + source + ") = " + result));
+                    }
+                } catch(nlohmann::detail::exception& json_exception) {
+                    std::cerr << json_exception.what() << std::endl;
+                }
 
-        for(const auto& print_job : response_json) {
-            const std::string& time_finished = print_job.at("datetime_finished").get<std::string>();
-            const std::string& time_started = print_job.at("datetime_started").get<std::string>();
-            const std::string& source = print_job.at("source").get<std::string>();
-            const std::string& result = print_job.at("result").get<std::string>();
-            const std::string& name = print_job.at("name").get<std::string>();
+                break;
+            }
 
-            printHistory->addItem(QString::fromStdString(time_started + " - " + time_finished + " | " + name + " (" + source + ") = " + result));
+            default : {
+                std::cerr << "Unhandled HTTP status code: " << response.Code << std::endl;
+                break;
+            }
         }
     }
 }
@@ -496,43 +537,40 @@ void MainWindow::handlePrintHistoryResponse() {
 
 /* ---------- Printjob Uploading / Response Handling ---------- */
 void MainWindow::on_btn_upload_clicked() {
-    if(!(authorizationId.size() && authorizationKey.size())) {
-        QMessageBox::warning(this, "Authorization Problem", "Cannot upload a printjob without credentials, request credentials.");
-        return;
-    }
+    const AuthCredentials& auth_credentials = authCredentials.Get();
 
-    const std::string& printer_ipv4_address = printerIpv4Address.Get();
+    if(auth_credentials.ValidSize()) {
+        const std::string& printer_ipv4_address = printerIpv4Address.Get();
 
-    if(!printer_ipv4_address.size()) {
-        QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
-        return;
-    }
+        if(printer_ipv4_address.size()) {
+            const std::string& file_name = QFileDialog::getOpenFileName(this, "Select Spliced GCode", ".", "GCode Files (*.gcode)").toStdString();
 
-    const std::string& file_name = QFileDialog::getOpenFileName(this, "Select Spliced GCode", ".", "GCode Files (*.gcode)").toStdString();
+            std::ifstream file_stream(file_name, std::ios::binary);
 
-    std::ifstream file_stream(file_name, std::ios::binary);
+            if(file_stream.good()) {
+                ui->btn_upload->setText("Uploading..");
 
-    if(!file_stream.good()) {
-        QMessageBox::warning(this, "I/O Error", "Couldn't open the selected GCode file for reading, ensure you have the correct privilages.");
-        return;
+                uploadFinishedResponse = QtConcurrent::run([](const std::string printer_ipv4_address, const std::string file_name, const AuthCredentials auth_credentials) -> Http::Response {
+                    Http::Response response = Http::Post(
+                         printer_ipv4_address + ENDP_PRINT_JOB,
+                         {{"jobname", file_name}},
+                         {{"file", file_name}},
+                         auth_credentials
+                    );
+
+                    return response;
+                }, printer_ipv4_address, file_name, auth_credentials);
+
+                uploadFinishedResponseWatcher->setFuture(uploadFinishedResponse);
+            } else {
+                QMessageBox::warning(this, "I/O Error", "Couldn't open the selected GCode file for reading, ensure you have the correct privilages.");
+            }
+        } else {
+            QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
+        }
     } else {
-        file_stream.close();
+        QMessageBox::warning(this, "Credential Problem", "Printer credentials are required for this operation.");
     }
-
-    ui->btn_upload->setText("Uploading..");
-
-    uploadFinishedResponse = QtConcurrent::run([this](const std::string printer_ipv4_address, const std::string file_name) -> Http::Response {
-        Http::Response response = Http::Post(
-             "http://" + printer_ipv4_address + "/api/v1/print_job",
-             {{"jobname", file_name}},
-             {{"file", file_name}},
-             {authorizationId, authorizationKey}
-        );
-
-        return response;
-    }, printer_ipv4_address, file_name);
-
-    uploadFinishedResponseWatcher->setFuture(uploadFinishedResponse);
 }
 void MainWindow::uploadFinishedHandler() {
     ui->btn_upload->setText("Upload Job To Printer");
@@ -571,94 +609,184 @@ void MainWindow::uploadFinishedHandler() {
 
 /* ---------- Various UI Element Slots ---------- */
 void MainWindow::on_btn_request_auth_clicked() {
-    ui->btn_request_auth->setText("Requesting..");
+    RaiiExecution raii_execution([this]() -> void {
+        ui->btn_request_auth->setText("Requesting..");
+        ui->btn_request_auth->repaint();
+    }, [this]() -> void {
+        ui->btn_request_auth->setText("Request Authorization");
+    });
 
-    std::string printer_ipv4_address = printerIpv4Address.Get();
+    const std::string& printer_ipv4_address = printerIpv4Address.Get();
 
-    Http::Response authorization_response = Http::Post(
-        "http://" + printer_ipv4_address + "/api/v1/auth/request",
-        {{"application", "Ultimaker-Monitor"}, {"user", "Ultimaker-Monitor"}},
-        {},
-        {}
+    if(!printer_ipv4_address.size()) {
+        QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
+        return;
+    }
+
+    Http::Response auth_response = Http::Post(
+        printer_ipv4_address + ENDP_AUTH_REQUEST, {
+            {"application", "Ultimaker-Monitor"},
+            {"user", "Ultimaker-Monitor"}
+        }, {}, {}
     );
 
-    if(authorization_response.Filled && authorization_response.Code == 200) {
-        QMessageBox::information(this, "Authorization requested", "Printer authorization ahs been requested, confirm on the printer.");
+    if(auth_response.Filled) {
+        switch(auth_response.Code) {
+            case 200 : {
+                QMessageBox::information(this, "Code 200", "Printer authorization has been requested, confirm on the printer.");
 
-        Json response_json = Json::parse(authorization_response.Body);
+                std::string recieved_auth_id;
+                std::string recieved_auth_key;
 
-        std::string new_auth_key = response_json.at("key").get<std::string>();
-        std::string new_auth_id = response_json.at("id").get<std::string>();
+                try {
+                    const Json& response_json = Json::parse(auth_response.Body);
+                    recieved_auth_id = response_json.at("id").get<std::string>();
+                    recieved_auth_key = response_json.at("key").get<std::string>();
+                } catch(nlohmann::detail::exception& json_exception) {
+                    QMessageBox::warning(this, "JSON Parsing Failure", "Failed to parse the response body. Exception: " + QString(json_exception.what()));
+                    return;
+                }
 
-        bool verified = false;
+                bool confirmed_or_denied = false;
 
-        for(uint32_t i=0; i<10; ++i) {
-            Http::Response verification_response = Http::Get(printer_ipv4_address + ENDP_AUTH_VERIFICATION, {new_auth_id, new_auth_key});
+                for(uint32_t attempts = 0; !confirmed_or_denied; Sleep(1000)) {
+                    if(attempts >= 20) {
+                        QMessageBox::warning(this, "Confirmation Timeout", "The requested credentials have neither been confirmed or denied after 20 attempts, giving up.");
+                        return;
+                    }
 
-            if(verification_response.Filled && verification_response.Code == 200) {
-                verified = true;
+                    Http::Response verification_response = Http::Get(printer_ipv4_address + ENDP_AUTH_CHECK + recieved_auth_id, {});
+
+                    switch(verification_response.Code) {
+                        case 200 : {
+                            std::string response_message;
+
+                            try {
+                                const Json& response_json = Json::parse(verification_response.Body);
+                                response_message = response_json.at("message").get<std::string>();
+                            } catch(nlohmann::detail::exception& json_exception) {
+                                QMessageBox::warning(this, "JSON Parsing Failure", "Failed to parse the response body. Exception: " + QString(json_exception.what()));
+                                return;
+                            }
+
+                            if(response_message == "authorized") {
+                                confirmed_or_denied = true;
+
+                                authCredentials = {recieved_auth_id, recieved_auth_key};
+
+                                QMessageBox::StandardButton user_response = QMessageBox::question(
+                                    this,
+                                    "Authorized",
+                                    "The application is now authoried. Would you like to save the authorized credentials?",
+                                    QMessageBox::Yes | QMessageBox::No
+                                );
+
+                                if(user_response == QMessageBox::Yes) {
+                                    std::ofstream credentials_file_stream("./printer-credentials.json", std::ios::binary);
+
+                                    if(credentials_file_stream.good()) {
+                                        const Json& credentials_json = {{"id", recieved_auth_id}, {"key", recieved_auth_key}};
+                                        const std::string& credentials_string = credentials_json.dump();
+                                        credentials_file_stream.write(credentials_string.data(), credentials_string.size());
+                                        credentials_file_stream.close();
+
+                                        QMessageBox::information(this, "Credentials Stored", "The authorized credentials have been stored @ printer-credentials.json");
+                                    } else {
+                                        QMessageBox::warning(this, "I/O Error", "Cannot open printer-credentials.json for writing.");
+                                    }
+                                }
+
+
+                            } else if(response_message == "unauthorized") {
+                                confirmed_or_denied = true;
+                                QMessageBox::information(this, "Unauthorized", "The application has not been authorized.");
+                            } else {
+                                ++attempts;
+                            }
+
+                            break;
+                        }
+
+                        default : {
+                            QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(auth_response.Code));
+                            break;
+                        }
+                    }
+                }
+
                 break;
-            } else {
-                Sleep(1000);
+            }
+
+            default : {
+                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(auth_response.Code));
+                break;
             }
         }
-
-        if(!verified) {
-             QMessageBox::warning(this, "Authorization problem!", "The authorization received from the printer wasn't accepted in time.");
-        } else {
-            QMessageBox::information(this, "Authorization Successful", "The authorization recieved from the printer has been verified.");
-
-            authorizationKey = new_auth_key;
-            authorizationId = new_auth_id;
-
-            std::ofstream credentials_file_stream("./printer-credentials.json", std::ios::binary);
-
-            if(credentials_file_stream.good()) {
-                const Json& credentials_json = {{"id", new_auth_id}, {"key", new_auth_key}};
-                const std::string& credentials_string = credentials_json.dump();
-                credentials_file_stream.write(credentials_string.data(), credentials_string.size());
-                credentials_file_stream.close();
-            }
-        }
-
     } else {
-        QMessageBox::warning(this, "Authorization problem!", "There was a problem requesting authorization from the printer. The response was bad.");
+        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
     }
-
-    ui->btn_request_auth->setText("Request Authorization");
-
-    std::cout << "Loaded Key/Id: " << authorizationKey << ":" << authorizationId << std::endl;
 }
 void MainWindow::on_btn_connect_clicked() {
-    QString new_ipv4_address = ui->lin_address->text();
+    RaiiExecution raii_execution([this]() -> void {
+        ui->btn_connect->setText("Connecting..");
+        ui->btn_connect->repaint();
+    }, [this]() -> void {
+        ui->btn_connect->setText("Connect");
+    });
 
-    ui->btn_connect->setText("Connecting..");
+    const std::string& new_ipv4_address = ui->lin_address->text().toStdString();
 
-    Http::Response network_check_response = Http::Get(new_ipv4_address.toStdString() + "/api/v1/printer/network", {}, 2UL);
+    Http::Response network_check_response = Http::Get(new_ipv4_address + ENDP_NETWORK_INFO, {}, 2);
 
-    if(network_check_response.Filled && network_check_response.Code == 200) {
-        printerIpv4Address = new_ipv4_address.toStdString();
-        ui->grp_system->setTitle("SYSTEM - " + new_ipv4_address);
+    if(network_check_response.Filled) {
+        switch(network_check_response.Code) {
+            case 200 : {
+                printerIpv4Address = new_ipv4_address;
+                ui->grp_system->setTitle("SYSTEM - " + QString::fromStdString(new_ipv4_address));
 
-        if(authorizationId.size() && authorizationKey.size()) {
-            const std::string& verification_request_url  = new_ipv4_address.toStdString() + ENDP_AUTH_VERIFICATION;
-            const Http::Response& verification_response = Http::Get(verification_request_url, {authorizationId, authorizationKey});
+                // If pre-existing credentials are loaded, check if they apply to the newly connected printer.
+                if(authCredentials.Get().ValidSize()) {
+                    Http::Response verification_response = Http::Get(new_ipv4_address + ENDP_AUTH_VERIFICATION, authCredentials.Get());
 
-            if(!(verification_response.Filled && verification_response.Code == 200)) {
-                authorizationId = "";
-                authorizationKey = "";
+                    if(verification_response.Filled) {
+                        switch(verification_response.Code) {
+                            // If the pre-existing credentials apply, continue without a prompt.
+                            case 200 : break;
 
-                QMessageBox::warning(this, "Authorization problem!",
-                    "The credentials stored in memory weren't validated by the printer. Credentials have been reset, request new credentials.");
-            } else {
-                QMessageBox::information(this, "Credentials Verified", "Pre-existing credentials have been verified for this new printer.");
+                            // If they don't, re-set the credentials to null and inform the user.
+                            case 401 : {
+                                authCredentials.Set({"", ""});
+                                QMessageBox::warning(this, "Code 401 - Unauthorized", "The credentials loaded in memory don't apply to newly connected printer. Request new authentication.");
+                                break;
+                            }
+
+                            case 403 : {
+                                authCredentials.Set({"", ""});
+                                QMessageBox::warning(this, "Code 403 - Forbidden", "The credentials loaded in memory don't apply to newly connected printer. Request new authentication.");
+                                break;
+                            }
+
+                            default : {
+                                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(verification_response.Code));
+                                break;
+                            }
+                        }
+                    } else {
+                        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
+                    }
+                }
+
+                break;
+            }
+
+            default : {
+                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(network_check_response.Code));
+                break;
             }
         }
     } else {
-        QMessageBox::warning(this, "Cannot connect", "Couldn't connect to the printer with the specified IPv4 address.");
+        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
     }
-
-    ui->btn_connect->setText("Connect");
 }
 void MainWindow::on_btn_polling_clicked() {
     if(ui->btn_polling->text() == "Start Polling") {
@@ -672,7 +800,7 @@ void MainWindow::on_btn_polling_clicked() {
         printHistoryPollingTimer->start(10000);
         printjobPollingTimer->start(1000);
         systemInfoPollingTimer->start(7000);
-        temperaturePollingTimer->start(500);
+        temperaturePollingTimer->start(100);
 
         ui->btn_polling->setText("Stop Polling");
     } else if(ui->btn_polling->text() == "Stop Polling") {
@@ -700,138 +828,150 @@ void MainWindow::on_tbt_expand_history_clicked() {
     }
 }
 void MainWindow::on_btn_abort_clicked() {
-    if(!(authorizationId.size() && authorizationKey.size())) {
-        QMessageBox::warning(this, "Authorization Problem", "Cannot change print state without credentials, request credentials.");
-        return;
-    }
+    const AuthCredentials& auth_credentials = authCredentials.Get();
 
-    const std::string& printer_ipv4_address = printerIpv4Address.Get();
+    if(auth_credentials.ValidSize()) {
+        const std::string& printer_ipv4_address = printerIpv4Address.Get();
 
-    if(!printer_ipv4_address.size()) {
-        QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
-        return;
-    }
+        if(printer_ipv4_address.size()) {
+            Http::Response abort_response = Http::Put(
+                printer_ipv4_address + ENDP_PRINTJOB_STATE,
+                "{\"target\":\"abort\"}",
+                auth_credentials,
+                1
+            );
 
-    const std::string& request_url = printer_ipv4_address + ENDP_PRINTJOB_STATE;
-    Http::Response abort_response = Http::Put(request_url, Json({{"target", "abort"}}).dump(), {authorizationId, authorizationKey});
+            if(abort_response.Filled) {
+                switch(abort_response.Code) {
+                    case 204: break;
+                    case 201: break;
 
-    if(abort_response.Filled) {
-        switch(abort_response.Code) {
-            case 204 : break;
-            case 201 : break;
+                    case 401 : {
+                        QMessageBox::warning(this, "Code 401", "Authorization required.");
+                        break;
+                    }
 
-            case 401 : {
-                QMessageBox::warning(this, "Code 401", "Authorization required.");
-                break;
+                    case 403 : {
+                        QMessageBox::warning(this, "Code 403", "Authorization denied.");
+                        break;
+                    }
+
+                    case 404 : {
+                        QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
+                        break;
+                    }
+
+                    default : {
+                        QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(abort_response.Code));
+                        break;
+                    }
+                }
+            } else {
+                QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
             }
-
-            case 403 : {
-                QMessageBox::warning(this, "Code 403", "Authorization denied.");
-                break;
-            }
-
-            case 404 : {
-                QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
-                break;
-            }
-
-            default : {
-                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(abort_response.Code));
-                break;
-            }
+        } else {
+            QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
         }
     } else {
-        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
+        QMessageBox::warning(this, "Credential Problem", "Printer credentials are required for this operation.");
     }
 }
 void MainWindow::on_btn_pause_clicked() {
-    if(!(authorizationId.size() && authorizationKey.size())) {
-        QMessageBox::warning(this, "Authorization Problem", "Cannot change print state without credentials, request credentials.");
-        return;
-    }
+    const AuthCredentials& auth_credentials = authCredentials.Get();
 
-    const std::string& printer_ipv4_address = printerIpv4Address.Get();
+    if(auth_credentials.ValidSize()) {
+        const std::string& printer_ipv4_address = printerIpv4Address.Get();
 
-    if(!printer_ipv4_address.size()) {
-        QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
-        return;
-    }
+        if(printer_ipv4_address.size()) {
+            Http::Response pause_response = Http::Put(
+                printer_ipv4_address + ENDP_PRINTJOB_STATE,
+                "{\"target\":\"pause\"}",
+                auth_credentials,
+                1
+            );
 
-    const std::string& request_url = printer_ipv4_address + ENDP_PRINTJOB_STATE;
-    Http::Response pause_response = Http::Put(request_url, Json({{"target", "pause"}}).dump(), {authorizationId, authorizationKey});
+            if(pause_response.Filled) {
+                switch(pause_response.Code) {
+                    case 204: break;
+                    case 201: break;
 
-    if(pause_response.Filled) {
-        switch(pause_response.Code) {
-            case 204 : break;
-            case 201 : break;
+                    case 401 : {
+                        QMessageBox::warning(this, "Code 401", "Authorization required.");
+                        break;
+                    }
 
-            case 401 : {
-                QMessageBox::warning(this, "Code 401", "Authorization required.");
-                break;
+                    case 403 : {
+                        QMessageBox::warning(this, "Code 403", "Authorization denied.");
+                        break;
+                    }
+
+                    case 404 : {
+                        QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
+                        break;
+                    }
+
+                    default : {
+                        QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(pause_response.Code));
+                        break;
+                    }
+                }
+            } else {
+                QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
             }
-
-            case 403 : {
-                QMessageBox::warning(this, "Code 403", "Authorization denied.");
-                break;
-            }
-
-            case 404 : {
-                QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
-                break;
-            }
-
-            default : {
-                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(pause_response.Code));
-                break;
-            }
+        } else {
+            QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
         }
     } else {
-        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
+        QMessageBox::warning(this, "Credential Problem", "Printer credentials are required for this operation.");
     }
 }
 void MainWindow::on_btn_resume_clicked() {
-    if(!(authorizationId.size() && authorizationKey.size())) {
-        QMessageBox::warning(this, "Authorization Problem", "Cannot change print state without credentials, request credentials.");
-        return;
-    }
+    const AuthCredentials& auth_credentials = authCredentials.Get();
 
-    const std::string& printer_ipv4_address = printerIpv4Address.Get();
+    if(auth_credentials.ValidSize()) {
+        const std::string& printer_ipv4_address = printerIpv4Address.Get();
 
-    if(!printer_ipv4_address.size()) {
-        QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
-        return;
-    }
+        if(printer_ipv4_address.size()) {
+            Http::Response resume_response = Http::Put(
+                printer_ipv4_address + ENDP_PRINTJOB_STATE,
+                "{\"target\":\"print\"}",
+                auth_credentials,
+                1
+            );
 
-    const std::string& request_url = printer_ipv4_address + ENDP_PRINTJOB_STATE;
-    Http::Response resume_response = Http::Put(request_url, Json({{"target", "print"}}).dump(), {authorizationId, authorizationKey});
+            if(resume_response.Filled) {
+                switch(resume_response.Code) {
+                    case 204: break;
+                    case 201: break;
 
-    if(resume_response.Filled) {
-        switch(resume_response.Code) {
-            case 204 : break;
-            case 201 : break;
+                    case 401 : {
+                        QMessageBox::warning(this, "Code 401", "Authorization required.");
+                        break;
+                    }
 
-            case 401 : {
-                QMessageBox::warning(this, "Code 401", "Authorization required.");
-                break;
+                    case 403 : {
+                        QMessageBox::warning(this, "Code 403", "Authorization denied.");
+                        break;
+                    }
+
+                    case 404 : {
+                        QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
+                        break;
+                    }
+
+                    default : {
+                        QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(resume_response.Code));
+                        break;
+                    }
+                }
+            } else {
+                QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
             }
-
-            case 403 : {
-                QMessageBox::warning(this, "Code 403", "Authorization denied.");
-                break;
-            }
-
-            case 404 : {
-                QMessageBox::warning(this, "Code 404", "No printjob to change the state of.");
-                break;
-            }
-
-            default : {
-                QMessageBox::warning(this, "Unhandled Code", "Unhandled HTTP response code: " + QString::number(resume_response.Code));
-                break;
-            }
+        } else {
+            QMessageBox::warning(this, "Connection Problem", "Not connected to any printer.");
         }
     } else {
-        QMessageBox::warning(this, "Timeout", "No response was given from the printer.");
+        QMessageBox::warning(this, "Credential Problem", "Printer credentials are required for this operation.");
     }
 }
 
@@ -841,8 +981,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     /* ---------- Default Variable Values ---------- */
     {
-        authorizationId = "";
-        authorizationKey = "";
+        authCredentials = {"", ""};
 
         handlingResponse = false;
         printHistoryExpanded = false;
@@ -932,24 +1071,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
             credentials_stream.close();
 
-            const std::string& credentials_string = std::string(file_bytes.begin(), file_bytes.end());
+            const std::string& credentials_json_string = std::string(file_bytes.begin(), file_bytes.end());
 
             try {
-                const Json& credentials_json = Json::parse(credentials_string);
+                const Json& credentials_json = Json::parse(credentials_json_string);
 
-                if(credentials_json.contains("id") && credentials_json.contains("key") && credentials_json.at("id").is_string() && credentials_json.at("key").is_string()) {
-                    authorizationId = credentials_json.at("id").get<std::string>();
-                    authorizationKey = credentials_json.at("key").get<std::string>();
-                }
+                authCredentials = {
+                    credentials_json.at("id").get<std::string>(),
+                    credentials_json.at("key").get<std::string>()
+                };
             } catch(const nlohmann::detail::exception& json_exception) {
-                std::cerr << "Encountered JSON exception when parsing printer credentials: " << json_exception.what() << std::endl;
+                QMessageBox::warning(this, "Parsing Error", "Could not parse printer-credentials.json - perhaps it's not valid JSON.");
             }
         }
     }
 
     /* ---------- QCustom Plot Widgets Setup & Styling ---------- */
     {
-        constexpr const uint32_t plot_resolution = 101;
+        constexpr const uint32_t plot_resolution = 501;
 
         // Initialize the plot data vector.
         printBedPlotData = QVector<double>(plot_resolution);
